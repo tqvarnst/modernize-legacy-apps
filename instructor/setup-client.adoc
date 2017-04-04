@@ -1,0 +1,57 @@
+= Setting up the client
+
+Login to the client using SSH
+
+== Installing openshift
+
+In this section we will install OpenShift Container Platform 3.4 using the RPM method
+
+=== Prepare the installation
+
+First we need to prepare the host for the installation.
+[source,bash]
+----
+hostnamectl set-hostname master.example.com 
+echo "127.0.0.1   master master.example.com" >> /etc/hosts
+
+mkdir -p /root/.config/openshift/.ansible/
+
+cat > /root/.config/openshift/installer.cfg.yml <<EOF
+ansible_callback_facts_yaml: /root/.config/openshift/.ansible/callback_facts.yaml
+ansible_inventory_path: /root/.config/openshift/hosts
+ansible_log_path: /tmp/ansible.log
+deployment:
+  ansible_ssh_user: root
+  hosts:
+  - connect_to: 127.0.0.1
+    hostname: master.example.com
+    ip: 127.0.0.1
+    node_labels: '{''region'': ''infra''}'
+    public_hostname: 127.0.0.1
+    public_ip: 127.0.0.1
+    roles:
+    - master
+    - etcd
+    - node
+    - storage
+  master_routingconfig_subdomain: apps.127.0.0.1.nip.io
+  openshift_master_cluster_hostname: None
+  openshift_master_cluster_public_hostname: None
+  proxy_exclude_hosts: ''
+  proxy_http: ''
+  proxy_https: ''
+  roles:
+    etcd: {}
+    master: {}
+    node: {}
+    storage: {}
+variant: openshift-enterprise
+variant_version: '3.4'
+version: v2
+EOF
+
+atomic-openshift-installer install
+----
+
+
+
