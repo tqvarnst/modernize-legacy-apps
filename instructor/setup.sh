@@ -37,6 +37,8 @@ done
 
 if $_DELETE && [ ! -z $_VIRT_MACHINE_NAME ]; then 
   virsh shutdown $_VIRT_MACHINE_NAME
+  sleep 10
+  virsh destroy $_VIRT_MACHINE_NAME
   sleep 5
   virsh undefine $_VIRT_MACHINE_NAME
   exit
@@ -83,11 +85,12 @@ fi
 mysha=$(cat ~/.ssh/id_rsa.pub) 
 
 # Customize and start the virtual machine
-echo "[HOST] Copying the base template image"
-cp /var/lib/libvirt/images/RHEL7.3-template.qcow2 /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 
+echo "[HOST] Creating the base image"
+qemu-img create -f qcow2 /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 40G
+virt-resize --expand /dev/sda2 --lvexpand /dev/rhel/root /var/lib/libvirt/images/RHEL7.3-template.qcow2 /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 
 
 echo "[HOST] Fixing Network in the image"
-virt-customize -a /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 --run-command 'cp /etc/sysconfig/network-scripts/ifcfg-ens3 /etc/sysconfig/network-scripts/ifcfg-eth0 && sed -i /^IPV6_/d /etc/sysconfig/network-scripts/ifcfg-eth0 && sed -i s/=ens3/=eth0/g /etc/sysconfig/network-scripts/ifcfg-eth0'
+virt-customize -a /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 --run-command 'cp /etc/sysconfig/network-scripts/ifcfg-ens3 /etc/sysconfig/network-scripts/ifcfg-eth0 && sed -i /^IPV6_/d /etc/sysconfig/network-scripts/ifcfg-eth0 && sed -i s/=ens3/=eth0/g /etc/sysconfig/network-scripts/ifcfg-eth0 && sed -i s/PEERDNS=yes/PEERDNS=no/g /etc/sysconfig/network-scripts/ifcfg-eth0 && echo "DNS1=8.8.8.8" >> /etc/sysconfig/network-scripts/ifcfg-eth0 && echo "DNS2=8.8.4.4" >> /etc/sysconfig/network-scripts/ifcfg-eth0'
 
 echo "[HOST] Adding SHA for remote access to root user"
 virt-customize -a /var/lib/libvirt/images/$_VIRT_MACHINE_NAME.qcow2 --run-command "mkdir -p /root/.ssh && echo \"$mysha\" > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && chcon -R -h system_u:object_r:ssh_home_t:s0 /root/.ssh"
@@ -134,7 +137,7 @@ ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -T root@$ip <<EO
     subscription-manager attach --pool="$subscription_pool_id" > /dev/null || subscription-manager attach --pool="$subscription_pool_id" > /dev/null #Sometimes we have to try twice ;-)
     
     subscription-manager repos --disable="*" > /dev/null
-    subscription-manager repos --enable="rhel-7-server-rpms" --enable="rhel-7-server-extras-rpms" --enable="rhel-7-server-ose-3.4-rpms"
+    subscription-manager repos --enable="rhel-7-server-rpms" --enable="rhel-7-server-extras-rpms" --enable="rhel-7-server-ose-3.5-rpms"
     
     echo "[GUEST] Removing libvirt and networking from the Guest"
     virsh net-undefine default > /dev/null
@@ -152,10 +155,10 @@ ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -T root@$ip <<EO
     
     echo "[GUEST] Configuring unsecure registry"
     sed -i '/OPTIONS=.*/c\OPTIONS="--selinux-enabled --insecure-registry 172.30.0.0/16 --log-opt max-size=1M --log-opt max-file=3"' /etc/sysconfig/docker
-    
+
     echo "[GUEST] Enable the docker service and adding student to the docker group"
     systemctl enable docker > /dev/null && groupadd docker && usermod -aG docker student
-
+    
     echo "[GUEST] Starting docker deamon"
     systemctl start docker > /dev/null
 
@@ -171,6 +174,84 @@ ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -T root@$ip <<EO
     rpm --import https://packages.microsoft.com/keys/microsoft.asc
     sh -c 'echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo'
     yum install -y code > /dev/null
+
+#    echo "[GUEST] Installing oc-cluster wrapper"
+#    curl -sL https://github.com/openshift-evangelists/oc-cluster-wrapper/archive/0.9.3.tar.gz | tar xz -C /usr/local && mv /usr/local/oc-cluster-wrapper-0.9.3 /usr/local/oc-cluster-wrapper
+#    echo 'export PATH=/usr/local/oc-cluster-wrapper:$PATH' >> $HOME/.bash_profile
+
+#    echo "Pulling down docker images"
+#    docker pull registry.access.redhat.com/jboss-amq-6/amq62-openshift
+#    docker pull registry.access.redhat.com/jboss-datagrid-5/datagrid65-client-openshift
+#    docker pull registry.access.redhat.com/jboss-datagrid-6/datagrid65-openshift
+#    docker pull registry.access.redhat.com/jboss-datavirt-6/datavirt63-driver-openshift
+#    docker pull registry.access.redhat.com/jboss-datavirt-6/datavirt63-openshift
+#    docker pull registry.access.redhat.com/jboss-decisionserver-6/decisionserver62-openshift
+#    docker pull registry.access.redhat.com/jboss-decisionserver-6/decisionserver63-openshift
+#    docker pull registry.access.redhat.com/jboss-eap-6/eap64-openshift
+#    docker pull registry.access.redhat.com/jboss-eap-7/eap70-openshift
+#    docker pull registry.access.redhat.com/jboss-processserver-6/processserver63-openshift
+#    docker pull registry.access.redhat.com/jboss-webserver-3/webserver30-tomcat7-openshift
+#    docker pull registry.access.redhat.com/jboss-webserver-3/webserver30-tomcat8-openshift
+#    docker pull registry.access.redhat.com/redhat-openjdk-18/openjdk18-openshift
+#    docker pull registry.access.redhat.com/redhat-sso-7/sso70-openshift
+#    docker pull registry.access.redhat.com/rhscl/postgresql-95-rhel7
+
+
+    cat > /usr/local/bin/oc-cluster-up.sh <<EOF
+#!/bin/sh
+
+/usr/bin/oc cluster up \
+        --host-config-dir='/var/lib/origin/openshift.local.config' \
+        --host-volumes-dir='/var/lib/origin/openshift.local.volumes' \
+        --host-data-dir='/var/lib/origin/openshift.local.data' \
+        --use-existing-config=true 
+
+mkdir -p /home/student/.kube
+cp -f /var/lib/origin/openshift.local.config/master/admin.kubeconfig /home/student/.kube/config
+chown -R student:student /home/student/.kube
+
+EOF
+
+    cat > /usr/local/bin/oc-cluster-down.sh <<EOF
+#!/bin/sh
+
+/usr/bin/oc cluster down
+
+EOF
+
+   cat > /etc/systemd/system/oc-cluster.service <<EOF
+[Unit]
+Description=OpenShift Cluster Service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oc-cluster-up.sh
+RemainAfterExit=true
+ExecStop=/usr/local/bin/oc-cluster-down.sh
+StandardOutput=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+    chmod 744 /usr/local/bin/oc-cluster-*.sh
+    chmod 664 /etc/systemd/system/oc-cluster.service
+
+    systemctl daemon-reload
+    systemctl enable oc-cluster.service
+    systemctl start oc-cluster.service
+
+
+    # Wait for the registry etc to startup 
+    sleep 30 
+
+    export KUBECONFIG=/var/lib/origin/openshift.local.config/master/admin.kubeconfig
+
+    oc login -u system:admin 
+
+    oc create -f https://raw.githubusercontent.com/jboss-openshift/application-templates/master/jboss-image-streams.json -n openshift 
+
 
 EOSSH
 
@@ -189,22 +270,23 @@ done
 echo
 
 
-echo "[HOST] Installing oc-cluster wrapper"
+echo "[HOST] Installing Student Tools"
 ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -T student@$ip <<'EOSSH'
-    echo "[GUEST] Installing oc-cluster wrapper"
-    git clone https://github.com/openshift-evangelists/oc-cluster-wrapper
+    #echo "[GUEST] Installing oc-cluster wrapper"
+    #git clone https://github.com/openshift-evangelists/oc-cluster-wrapper
 
     echo "[GUEST] Installing maven"
     curl -s http://apache.mirrors.spacedump.net/maven/maven-3/3.3.9/binaries/apache-maven-3.3.9-bin.tar.gz | tar xz -C $HOME && mv ~/apache-maven-3* ~/apache-maven
     
     echo 'export JAVA_HOME=/usr/lib/jvm/java-1.8.0' >> $HOME/.bash_profile
-    echo 'export PATH=$HOME/oc-cluster-wrapper:$HOME/apache-maven/bin:$JAVA_HOME/bin:$PATH' >> $HOME/.bash_profile
+    echo 'export PATH=$HOME/apache-maven/bin:$JAVA_HOME/bin:$PATH' >> $HOME/.bash_profile
+    #echo 'export PATH=/usr/local/oc-cluster-wrapper:$HOME/apache-maven/bin:$JAVA_HOME/bin:$PATH' >> $HOME/.bash_profile
 
     echo "[GUEST] Installing Red Hat Java extension to Visual Studio Code Editor"
     code --install-extension=redhat.java
 EOSSH
 
-echo "[HOST] Starting oc-cluster and importing xpaas images"
+echo "[HOST] Importing xpaas images"
 ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -T student@$ip <<'EOSSH'    
     mkdir -p ~/projects
 
